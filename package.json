@@ -1,0 +1,7 @@
+{
+  "type": "module",
+  "dependencies": {
+    "inquirer": "^12.4.1",
+    "puppeteer": "^24.2.0"
+  }
+}
