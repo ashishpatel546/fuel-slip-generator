@@ -226,29 +226,14 @@ async function generateFuelSlip(config, browser) {
       fs.mkdirSync(downloadPath);
     }
 
-    await page.goto('https://freeforonline.com/fuel-bills/index.html', {
-      waitUntil: 'networkidle0',
-      timeout: 60000,
-    });
-
-    // Enable request interception
-    await page.setRequestInterception(true);
-
-    page.on('request', (request) => {
-      request.continue();
-      console.log(`Request: ${request.url()}`);
-    });
-
-    page.on('response', (response) => {
-      console.log(`Response: ${response.url()} - ${response.status()}`);
-    });
+    // Remove request interception completely
+    // await page.setRequestInterception(true);
 
     console.log('Navigating to page...');
     await page.goto('https://freeforonline.com/fuel-bills/index.html', {
       waitUntil: 'networkidle0',
       timeout: 60000,
     });
-    console.log('Page loaded');
 
     // Wait for core elements first
     console.log('Waiting for core elements...');
@@ -430,38 +415,45 @@ async function generateFuelSlip(config, browser) {
 
     await delay(3000); // Give more time for template to update
 
-    // Click download with proper event handling
+    console.log('Attempting to download slip...');
+
+    // Single download attempt with better event handling
     await page.evaluate(() => {
-      const downloadBtn = document.querySelector('#download-fuel-bills');
-      if (downloadBtn) {
-        downloadBtn.click();
-        // Also dispatch click event
-        const clickEvent = new MouseEvent('click', {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-        });
-        downloadBtn.dispatchEvent(clickEvent);
-      }
+      return new Promise((resolve) => {
+        const downloadBtn = document.querySelector('#download-fuel-bills');
+        if (downloadBtn) {
+          downloadBtn.addEventListener(
+            'click',
+            () => {
+              setTimeout(resolve, 1000);
+            },
+            { once: true }
+          );
+          downloadBtn.click();
+        } else {
+          resolve();
+        }
+      });
     });
 
-    // Wait longer for download to complete
-    await delay(10000);
+    console.log('Download button clicked');
+    await delay(8000); // Wait for download to complete
 
     // Take screenshot for debugging
+    console.log('Taking debug screenshot...');
     await page.screenshot({
       path: path.join(downloadPath, `debug-${Date.now()}.png`),
       fullPage: true,
     });
 
     // Clear the form to prevent duplicate generation
+    console.log('Clearing form...');
     await page.evaluate(() => {
       const form = document.querySelector('form');
       if (form) form.reset();
     });
 
     await delay(2000);
-
     console.log('Process completed');
   } catch (error) {
     console.error('Detailed Error:', error);
@@ -494,7 +486,8 @@ async function main() {
     for (let i = 0; i < config.slipCount; i++) {
       console.log(`\nGenerating slip ${i + 1} of ${config.slipCount}`);
       await generateFuelSlip(config, browser); // Pass browser instance
-      await delay(3000);
+      // Increased delay between generations to prevent overlapping
+      await delay(5000);
     }
   } finally {
     await browser.close();
