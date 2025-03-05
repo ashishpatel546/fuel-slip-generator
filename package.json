@@ -2,6 +2,7 @@
   "type": "module",
   "dependencies": {
     "inquirer": "^12.4.1",
-    "puppeteer": "^24.2.0"
+    "puppeteer": "^24.2.0",
+    "cli-progress": "^3.12.0"
   }
 }

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 // Get __dirname equivalent in ES modules
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function getRandomString(length) {
+export function getRandomString(length) {
   const characters =
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let result = '';
@@ -21,7 +21,7 @@ function getRandomNumber(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function getRandomFloat(min, max, decimals = 2) {
+export function getRandomFloat(min, max, decimals = 2) {
   const str = (Math.random() * (max - min) + min).toFixed(decimals);
   return parseFloat(str);
 }
@@ -42,11 +42,11 @@ function toSentenceCase(str) {
     .join(' ');
 }
 
-function toUpperCase(str) {
+export function toUpperCase(str) {
   return str ? str.toUpperCase() : str;
 }
 
-async function getUserInputs() {
+export async function getUserInputs() {
   const questions = [
     {
       type: 'list',
@@ -122,7 +122,7 @@ async function getUserInputs() {
       type: 'input', // Changed from 'number' to 'input' to allow decimals
       name: 'approxRate',
       message: 'Enter approximate fuel rate (can use decimals):',
-      default: '100.00',
+      default: '94.50',
       validate: (value) => {
         if (isNaN(parseFloat(value))) {
           return 'Please enter a valid number';
@@ -163,34 +163,69 @@ async function getUserInputs() {
     },
     {
       type: 'number',
-      name: 'minQuantity',
-      message: 'Minimum fuel quantity (in liters):',
-      default: 5,
+      name: 'minAmount',
+      message: 'Minimum amount per bill:',
+      default: 1500,
+      validate: (value) => {
+        if (value <= 0) return 'Amount must be greater than 0';
+        return true;
+      },
     },
     {
       type: 'number',
-      name: 'maxQuantity',
-      message: 'Maximum fuel quantity (in liters):',
-      default: 50,
+      name: 'maxAmount',
+      message: 'Maximum amount per bill:',
+      default: 3500,
+      validate: (value) => {
+        if (value <= 0) return 'Amount must be greater than 0';
+        return true;
+      },
+    },
+    {
+      type: 'confirm',
+      name: 'takeDebugScreenshots',
+      message: 'Do you want to take debug screenshots?',
+      default: false,
     },
   ];
 
-  return inquirer.prompt(questions);
+  // Validate the entire input after collection
+  const answers = await inquirer.prompt(questions);
+
+  // Additional validation to ensure maxAmount > minAmount
+  if (answers.maxAmount <= answers.minAmount) {
+    throw new Error('Maximum amount must be greater than minimum amount');
+  }
+
+  return answers;
+}
+
+// Add new confirmation prompt function
+async function confirmContinue(message) {
+  const answer = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'continue',
+      message: message,
+      default: true,
+    },
+  ]);
+  return answer.continue;
 }
 
 // Add new function to generate receipt numbers
 let currentReceiptNumber = Date.now();
-function generateReceiptNumber() {
+export function generateReceiptNumber() {
   return `RCPT${currentReceiptNumber++}`;
 }
 
 // Modify the price generation function
-function generatePrice(basePrice) {
+export function generatePrice(basePrice) {
   const variation = Math.random() < 0.5 ? -0.01 : 0.03;
   return (Math.round((basePrice + variation) * 100) / 100).toFixed(2);
 }
 
-function generateRandomDate(fromMonth, toMonth, fromYear, toYear) {
+export function generateRandomDate(fromMonth, toMonth, fromYear, toYear) {
   const months = [
     'January',
     'February',
@@ -217,7 +252,100 @@ function generateRandomDate(fromMonth, toMonth, fromYear, toYear) {
   return new Date(randomTimestamp).toLocaleDateString();
 }
 
-async function generateFuelSlip(config, browser) {
+// Modified generateBillAmounts function
+function generateBillAmounts(totalAmount, numberOfBills, minAmount, maxAmount) {
+  let amounts = [];
+  let remainingAmount = totalAmount;
+  let remainingBills = numberOfBills;
+
+  while (remainingBills > 0) {
+    let currentAmount;
+    if (remainingBills === 1) {
+      // Last bill - use remaining amount
+      currentAmount = remainingAmount;
+    } else {
+      // Generate a random amount between min and max that doesn't exceed remaining amount
+      const maxPossible = Math.min(
+        maxAmount,
+        remainingAmount - minAmount * (remainingBills - 1)
+      );
+      const minPossible = Math.max(
+        minAmount,
+        remainingAmount - maxAmount * (remainingBills - 1)
+      );
+      currentAmount = Math.floor(
+        Math.random() * (maxPossible - minPossible + 1) + minPossible
+      );
+    }
+
+    // Validate the amount
+    if (
+      currentAmount >= minAmount &&
+      currentAmount <= maxAmount &&
+      remainingAmount - currentAmount >= minAmount * (remainingBills - 1)
+    ) {
+      amounts.push(currentAmount);
+      remainingAmount -= currentAmount;
+      remainingBills--;
+    }
+  }
+
+  // Shuffle the amounts
+  const sortedAmounts = amounts.sort(() => Math.random() - 0.5);
+  const total = sortedAmounts.reduce((sum, amount) => sum + amount, 0);
+
+  return {
+    amounts: sortedAmounts,
+    total,
+    isValid: total === totalAmount,
+  };
+}
+
+// Modified generateAllSlipsData function
+function generateAllSlipsData(config) {
+  const billAmounts = generateBillAmounts(
+    config.totalAmount,
+    config.slipCount,
+    config.minAmount,
+    config.maxAmount
+  );
+
+  return billAmounts.amounts.map((amount) => {
+    const rate = generatePrice(config.approxRate);
+    const quantity = +(amount / rate).toFixed(2);
+
+    return {
+      receiptNumber: generateReceiptNumber(),
+      teleNumber: '1800-XXX-XXXX',
+      fccId: `FCC${getRandomString(6)}`,
+      fipId: `FIP${getRandomString(4)}`,
+      nozzleId: `N${getRandomString(2)}`,
+      rate,
+      amount,
+      quantity,
+      fuelType: config.fuelType,
+      vehicleType: 'Car',
+      vehicleNumber: toUpperCase(
+        config.vehicleNumber ||''
+      ),
+      date: generateRandomDate(
+        config.fromMonth,
+        config.toMonth,
+        config.fromYear,
+        config.toYear
+      ),
+      customerName: toUpperCase(config.customerName) || '',
+      stationName: `${config.oilCompany} ${
+        config.fuelType
+      } Pump`,
+      stationAddress:
+        config.stationAddress ||'',
+    };
+  });
+}
+
+// Modify generateFuelSlip to accept pre-generated data
+async function generateFuelSlip(config, browser, slipData) {
   const page = await browser.newPage();
 
   try {
@@ -247,23 +375,9 @@ async function generateFuelSlip(config, browser) {
       await page.waitForSelector(selector);
     }
 
-    // Calculate random amount based on quantity and rate with decimal support
-    const quantity = getRandomFloat(config.minQuantity, config.maxQuantity, 2);
-    const rate = generatePrice(config.approxRate);
-    const amount = Math.round(quantity * rate); // Round to whole number
-
-    // Updated station name to include oil company name
-    const stationName = `${config.oilCompany} ${
-      config.fuelType
-    } Pump ${getRandomString(5)}`;
-    await page.type('#fs-station-name', stationName);
-
-    // Fill address
-    await page.type(
-      '#fs-address',
-      config.stationAddress ||
-        `${getRandomString(10)} Street, ${getRandomString(8)} City`
-    );
+    // Instead of generating random values, use the pre-generated slipData
+    await page.type('#fs-station-name', slipData.stationName);
+    await page.type('#fs-address', slipData.stationAddress);
 
     await delay(2000);
 
@@ -343,32 +457,7 @@ async function generateFuelSlip(config, browser) {
 
     await delay(2000);
 
-    // Generate all random values before evaluate
-    const randomData = {
-      receiptNumber: generateReceiptNumber(),
-      teleNumber: '1800-XXX-XXXX',
-      fccId: `FCC${getRandomString(6)}`,
-      fipId: `FIP${getRandomString(4)}`,
-      nozzleId: `N${getRandomString(2)}`,
-      rate,
-      amount,
-      quantity: quantity.toFixed(2), // Ensure 2 decimal places
-      fuelType: config.fuelType,
-      vehicleType: 'Car',
-      vehicleNumber: toUpperCase(
-        config.vehicleNumber ||
-          `${getRandomString(2)}-${getRandomNumber(1000, 9999)}`
-      ),
-      date: generateRandomDate(
-        config.fromMonth,
-        config.toMonth,
-        config.fromYear,
-        config.toYear
-      ),
-      customerName: toUpperCase(config.customerName) || '', // Changed from toSentenceCase to toUpperCase
-    };
-
-    // Update template values using JavaScript evaluation with pre-generated data
+    // Update template values using the pre-generated data
     await page.evaluate((data) => {
       const updateElement = (selector, value) => {
         const elements = document.querySelectorAll(selector);
@@ -411,7 +500,7 @@ async function generateFuelSlip(config, browser) {
       // Update any hidden elements that might affect the template
       const vatElements = document.querySelectorAll('[data-tm="vat-none"]');
       vatElements.forEach((el) => el.classList.remove('d-none'));
-    }, randomData);
+    }, slipData);
 
     await delay(3000); // Give more time for template to update
 
@@ -437,14 +526,16 @@ async function generateFuelSlip(config, browser) {
     });
 
     console.log('Download button clicked');
-    await delay(8000); // Wait for download to complete
+    await delay(2000); // Wait for download to complete
 
     // Take screenshot for debugging
-    console.log('Taking debug screenshot...');
-    await page.screenshot({
-      path: path.join(downloadPath, `debug-${Date.now()}.png`),
-      fullPage: true,
-    });
+    if (config.takeDebugScreenshots) {
+      console.log('Taking debug screenshot...');
+      await page.screenshot({
+        path: path.join(downloadPath, `debug-${Date.now()}.png`),
+        fullPage: true,
+      });
+    }
 
     // Clear the form to prevent duplicate generation
     console.log('Clearing form...');
@@ -476,6 +567,42 @@ async function main() {
   console.log('\nGenerating fuel slips with these configurations:');
   console.log(config);
 
+  // Generate and validate bill amounts first
+  const billData = generateBillAmounts(
+    config.totalAmount,
+    config.slipCount,
+    config.minAmount,
+    config.maxAmount
+  );
+
+  console.log('\nGenerated amount distribution:');
+  console.log('Amounts:', billData.amounts);
+  console.log('Total:', billData.total);
+  console.log('Expected Total:', config.totalAmount);
+
+  if (!billData.isValid) {
+    console.error('Error: Generated amounts do not match the total amount!');
+    return;
+  }
+
+  // First confirmation after amounts
+  if (!(await confirmContinue('Do you want to continue with these amounts?'))) {
+    console.log('Operation cancelled by user after amount generation.');
+    return;
+  }
+
+  // Generate all slip data upfront
+  const allSlipsData = generateAllSlipsData(config);
+  console.log(`All Slip Data:`, allSlipsData);
+
+  // Second confirmation after slip data
+  if (
+    !(await confirmContinue('Do you want to continue with slip generation?'))
+  ) {
+    console.log('Operation cancelled by user after slip data generation.');
+    return;
+  }
+
   const browser = await puppeteer.launch({
     headless: 'new',
     args: ['--no-sandbox'],
@@ -485,7 +612,7 @@ async function main() {
   try {
     for (let i = 0; i < config.slipCount; i++) {
       console.log(`\nGenerating slip ${i + 1} of ${config.slipCount}`);
-      await generateFuelSlip(config, browser); // Pass browser instance
+      await generateFuelSlip(config, browser, allSlipsData[i]);
       // Increased delay between generations to prevent overlapping
       await delay(5000);
     }
