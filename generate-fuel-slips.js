@@ -281,7 +281,13 @@ export function generateRandomDate(fromMonth, toMonth, fromYear, toYear) {
 }
 
 // Add this new function after other utility functions
-export function generateDateSequence(fromMonth, toMonth, fromYear, toYear, count) {
+export function generateDateSequence(
+  fromMonth,
+  toMonth,
+  fromYear,
+  toYear,
+  count
+) {
   const months = [
     'January',
     'February',
@@ -780,7 +786,7 @@ export async function generateFuelSlip(config, browser, slipData) {
 }
 
 // add new method to generate slips
-export async function generate(config){
+export async function generate(config) {
   config.approxRate = parseFloat(config.approxRate);
 
   console.log('\nGenerating fuel slips with these configurations:');
@@ -1067,5 +1073,10 @@ async function main() {
   // }
 }
 
-// Start the script
-// main().catch(console.error);
+// Check if the module is being run directly or via npm script
+if (
+  process.env.npm_lifecycle_event === 'start' ||
+  !process.env.npm_lifecycle_event
+) {
+  main().catch(console.error);
+}

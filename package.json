@@ -7,6 +7,6 @@
   },
   "scripts": {
     "start": "node generate-fuel-slips.js",
-    "start-v2": "node generate-fuel-slips-v2.js"
+    "start-config": "node generate-fuel-slips-v2.js"
   }
 }
