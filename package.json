@@ -4,5 +4,9 @@
     "inquirer": "^12.4.1",
     "puppeteer": "^24.2.0",
     "cli-progress": "^3.12.0"
+  },
+  "scripts": {
+    "start": "node generate-fuel-slips.js",
+    "start-v2": "node generate-fuel-slips-v2.js"
   }
 }

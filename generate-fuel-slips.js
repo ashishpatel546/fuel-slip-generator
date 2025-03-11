@@ -47,7 +47,8 @@ export function toUpperCase(str) {
 }
 
 export async function getUserInputs() {
-  const questions = [
+  // First collect basic slip count
+  const initialQuestions = [
     {
       type: 'list',
       name: 'fromYear',
@@ -142,6 +143,30 @@ export async function getUserInputs() {
       name: 'slipCount',
       message: 'How many slips to generate?',
       default: 1,
+      validate: (value) => {
+        if (value < 1) return 'At least one slip must be generated';
+        return true;
+      },
+    },
+  ];
+
+  // Get initial answers including slipCount
+  const initialAnswers = await inquirer.prompt(initialQuestions);
+
+  // Now we can use the slipCount in the minSlipCount validation
+  const remainingQuestions = [
+    {
+      type: 'number',
+      name: 'minSlipCount',
+      message:
+        'Minimum number of slips to generate (if not specified, equals to slipCount):',
+      default: initialAnswers.slipCount,
+      validate: function (value) {
+        if (value < 1) return 'Minimum slip count must be at least 1';
+        if (value > initialAnswers.slipCount)
+          return 'Minimum slip count cannot be greater than total slip count';
+        return true;
+      },
     },
     {
       type: 'number',
@@ -189,8 +214,11 @@ export async function getUserInputs() {
     },
   ];
 
-  // Validate the entire input after collection
-  const answers = await inquirer.prompt(questions);
+  // Get remaining answers
+  const remainingAnswers = await inquirer.prompt(remainingQuestions);
+
+  // Combine all answers
+  const answers = { ...initialAnswers, ...remainingAnswers };
 
   // Additional validation to ensure maxAmount > minAmount
   if (answers.maxAmount <= answers.minAmount) {
@@ -201,7 +229,7 @@ export async function getUserInputs() {
 }
 
 // Add new confirmation prompt function
-async function confirmContinue(message) {
+export async function confirmContinue(message) {
   const answer = await inquirer.prompt([
     {
       type: 'confirm',
@@ -252,42 +280,229 @@ export function generateRandomDate(fromMonth, toMonth, fromYear, toYear) {
   return new Date(randomTimestamp).toLocaleDateString();
 }
 
-// Modified generateBillAmounts function
-function generateBillAmounts(totalAmount, numberOfBills, minAmount, maxAmount) {
+// Add this new function after other utility functions
+export function generateDateSequence(fromMonth, toMonth, fromYear, toYear, count) {
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+
+  const fromIndex = months.indexOf(fromMonth);
+  const toIndex = months.indexOf(toMonth);
+
+  const startDate = new Date(fromYear, fromIndex, 1);
+  const endDate = new Date(toYear, toIndex + 1, 0); // Last day of end month
+
+  let dates = [];
+  let currentDate = new Date(startDate);
+
+  // Generate dates with random intervals
+  while (currentDate <= endDate && dates.length < count) {
+    dates.push(new Date(currentDate));
+    // Add random days between 5 and 25
+    const randomDays = Math.floor(Math.random() * (25 - 5 + 1)) + 5;
+    currentDate.setDate(currentDate.getDate() + randomDays);
+  }
+
+  // If we still need more dates, distribute remaining evenly
+  if (dates.length < count) {
+    const remainingCount = count - dates.length;
+    const totalDays =
+      (endDate - dates[dates.length - 1]) / (1000 * 60 * 60 * 24);
+    const averageInterval = Math.floor(totalDays / (remainingCount + 1));
+
+    let lastDate = new Date(dates[dates.length - 1]);
+    while (dates.length < count && lastDate < endDate) {
+      lastDate = new Date(lastDate);
+      lastDate.setDate(lastDate.getDate() + averageInterval);
+      if (lastDate <= endDate) {
+        dates.push(lastDate);
+      }
+    }
+  }
+
+  // Sort dates and format them
+  return dates.sort((a, b) => a - b).map((date) => date.toLocaleDateString());
+}
+
+// Modified generateBillAmounts function with recursion limit
+export function generateBillAmounts(
+  totalAmount,
+  numberOfBills,
+  minAmount,
+  maxAmount,
+  minSlipCount = numberOfBills,
+  recursionCount = 0
+) {
+  // Add recursion limit to prevent stack overflow
+  const MAX_RECURSION = 100;
+  if (recursionCount > MAX_RECURSION) {
+    console.error(
+      'Reached maximum recursion depth. The constraints may be impossible to satisfy.'
+    );
+
+    // Fallback: generate approximately equal amounts that satisfy total
+    const equalAmount = Math.floor(totalAmount / numberOfBills);
+    let amounts = new Array(numberOfBills).fill(equalAmount);
+
+    // Adjust the last amount to make the total exact
+    amounts[amounts.length - 1] += totalAmount - equalAmount * numberOfBills;
+
+    return {
+      amounts,
+      total: totalAmount,
+      isValid: true,
+      isApproximation: true,
+    };
+  }
+
+  // Initial validation to check if constraints are even theoretically possible
+  const minPossibleTotal = minAmount * numberOfBills;
+  const maxPossibleTotal = maxAmount * numberOfBills;
+
+  if (totalAmount < minPossibleTotal || totalAmount > maxPossibleTotal) {
+    console.warn(
+      `Warning: Impossible constraints - Total amount (${totalAmount}) is outside possible range (${minPossibleTotal}-${maxPossibleTotal})`
+    );
+
+    // Try to adjust min/max amounts to make it possible
+    let adjustedMinAmount = minAmount;
+    let adjustedMaxAmount = maxAmount;
+
+    if (totalAmount < minPossibleTotal) {
+      adjustedMinAmount = Math.floor(totalAmount / numberOfBills);
+    }
+
+    if (totalAmount > maxPossibleTotal) {
+      adjustedMaxAmount = Math.ceil(totalAmount / numberOfBills);
+    }
+
+    console.log(
+      `Adjusting constraints: min=${adjustedMinAmount}, max=${adjustedMaxAmount}`
+    );
+
+    // Continue with adjusted constraints
+    minAmount = adjustedMinAmount;
+    maxAmount = adjustedMaxAmount;
+  }
+
+  if (minSlipCount > numberOfBills) {
+    minSlipCount = numberOfBills; // Safety check
+  }
+
   let amounts = [];
   let remainingAmount = totalAmount;
   let remainingBills = numberOfBills;
 
-  while (remainingBills > 0) {
+  // First, generate minSlipCount bills ensuring they all meet the criteria
+  for (let i = 0; i < minSlipCount; i++) {
     let currentAmount;
-    if (remainingBills === 1) {
-      // Last bill - use remaining amount
+
+    if (i === minSlipCount - 1 && minSlipCount === numberOfBills) {
+      // Last bill if we're only generating the minimum required - use remaining amount
       currentAmount = remainingAmount;
     } else {
-      // Generate a random amount between min and max that doesn't exceed remaining amount
+      // Calculate safe bounds for this bill
       const maxPossible = Math.min(
         maxAmount,
         remainingAmount - minAmount * (remainingBills - 1)
       );
+
       const minPossible = Math.max(
         minAmount,
         remainingAmount - maxAmount * (remainingBills - 1)
       );
+
+      // Check if constraints are impossible at this point
+      if (minPossible > maxPossible) {
+        // Try again with a fresh start, increment recursion counter
+        return generateBillAmounts(
+          totalAmount,
+          numberOfBills,
+          minAmount,
+          maxAmount,
+          minSlipCount,
+          recursionCount + 1
+        );
+      }
+
+      // Generate a random amount within valid range
       currentAmount = Math.floor(
         Math.random() * (maxPossible - minPossible + 1) + minPossible
       );
     }
 
-    // Validate the amount
-    if (
-      currentAmount >= minAmount &&
-      currentAmount <= maxAmount &&
-      remainingAmount - currentAmount >= minAmount * (remainingBills - 1)
-    ) {
-      amounts.push(currentAmount);
-      remainingAmount -= currentAmount;
-      remainingBills--;
+    amounts.push(currentAmount);
+    remainingAmount -= currentAmount;
+    remainingBills--;
+  }
+
+  // Generate any remaining bills if needed
+  while (remainingBills > 0) {
+    let currentAmount;
+
+    if (remainingBills === 1) {
+      // Last bill - use remaining amount
+      currentAmount = remainingAmount;
+    } else {
+      // Calculate safe bounds for this bill
+      const maxPossible = Math.min(
+        maxAmount,
+        remainingAmount - minAmount * (remainingBills - 1)
+      );
+
+      const minPossible = Math.max(
+        minAmount,
+        remainingAmount - maxAmount * (remainingBills - 1)
+      );
+
+      // Check if constraints are impossible at this point
+      if (minPossible > maxPossible) {
+        // Try again with a fresh start, increment recursion counter
+        return generateBillAmounts(
+          totalAmount,
+          numberOfBills,
+          minAmount,
+          maxAmount,
+          minSlipCount,
+          recursionCount + 1
+        );
+      }
+
+      // Generate a random amount within valid range
+      currentAmount = Math.floor(
+        Math.random() * (maxPossible - minPossible + 1) + minPossible
+      );
     }
+
+    // Validate the generated amount
+    if (currentAmount < minAmount || currentAmount > maxAmount) {
+      // If we have an invalid amount on the last bill, try again
+      if (remainingBills === 1) {
+        return generateBillAmounts(
+          totalAmount,
+          numberOfBills,
+          minAmount,
+          maxAmount,
+          minSlipCount,
+          recursionCount + 1
+        );
+      }
+    }
+
+    amounts.push(currentAmount);
+    remainingAmount -= currentAmount;
+    remainingBills--;
   }
 
   // Shuffle the amounts
@@ -298,16 +513,26 @@ function generateBillAmounts(totalAmount, numberOfBills, minAmount, maxAmount) {
     amounts: sortedAmounts,
     total,
     isValid: total === totalAmount,
+    isApproximation: false,
   };
 }
 
-// Modified generateAllSlipsData function
+// Add new function to create date-amount pairs
+export function createDateAmountPairs(amounts, dates) {
+  return amounts.map((amount, index) => ({
+    date: dates[index],
+    amount: amount,
+  }));
+}
+
+// Modified generateAllSlipsData function to use minSlipCount parameter
 function generateAllSlipsData(config) {
   const billAmounts = generateBillAmounts(
     config.totalAmount,
     config.slipCount,
     config.minAmount,
-    config.maxAmount
+    config.maxAmount,
+    config.minSlipCount
   );
 
   return billAmounts.amounts.map((amount) => {
@@ -325,9 +550,7 @@ function generateAllSlipsData(config) {
       quantity,
       fuelType: config.fuelType,
       vehicleType: 'Car',
-      vehicleNumber: toUpperCase(
-        config.vehicleNumber ||''
-      ),
+      vehicleNumber: toUpperCase(config.vehicleNumber || ''),
       date: generateRandomDate(
         config.fromMonth,
         config.toMonth,
@@ -335,17 +558,14 @@ function generateAllSlipsData(config) {
         config.toYear
       ),
       customerName: toUpperCase(config.customerName) || '',
-      stationName: `${config.oilCompany} ${
-        config.fuelType
-      } Pump`,
-      stationAddress:
-        config.stationAddress ||'',
+      stationName: `${config.oilCompany} ${config.fuelType} Pump`,
+      stationAddress: config.stationAddress || '',
     };
   });
 }
 
 // Modify generateFuelSlip to accept pre-generated data
-async function generateFuelSlip(config, browser, slipData) {
+export async function generateFuelSlip(config, browser, slipData) {
   const page = await browser.newPage();
 
   try {
@@ -559,29 +779,84 @@ async function generateFuelSlip(config, browser, slipData) {
   }
 }
 
-// Modified main function to prevent duplicates
-async function main() {
-  const config = await getUserInputs();
+// add new method to generate slips
+export async function generate(config){
   config.approxRate = parseFloat(config.approxRate);
 
   console.log('\nGenerating fuel slips with these configurations:');
   console.log(config);
 
-  // Generate and validate bill amounts first
+  // Do initial validation on the constraints
+  const minPossibleTotal = config.minAmount * config.slipCount;
+  const maxPossibleTotal = config.maxAmount * config.slipCount;
+
+  if (
+    config.totalAmount < minPossibleTotal ||
+    config.totalAmount > maxPossibleTotal
+  ) {
+    console.warn(`Warning: Your constraints might be difficult to satisfy.`);
+    console.warn(`With ${config.slipCount} slips:`);
+    console.warn(
+      `- Minimum possible total: ${minPossibleTotal} (${config.slipCount} slips × ${config.minAmount} min/slip)`
+    );
+    console.warn(
+      `- Maximum possible total: ${maxPossibleTotal} (${config.slipCount} slips × ${config.maxAmount} max/slip)`
+    );
+    console.warn(`- Your requested total: ${config.totalAmount}`);
+
+    const willContinue = await confirmContinue(
+      'Would you like to continue anyway? (The system will try to approximate)'
+    );
+    if (!willContinue) {
+      console.log('Operation cancelled by user.');
+      return;
+    }
+  }
+
+  // Generate and validate bill amounts first with minSlipCount
   const billData = generateBillAmounts(
     config.totalAmount,
     config.slipCount,
     config.minAmount,
-    config.maxAmount
+    config.maxAmount,
+    config.minSlipCount
   );
 
-  console.log('\nGenerated amount distribution:');
-  console.log('Amounts:', billData.amounts);
-  console.log('Total:', billData.total);
+  // Generate dates sequence
+  const dates = generateDateSequence(
+    config.fromMonth,
+    config.toMonth,
+    config.fromYear,
+    config.toYear,
+    config.slipCount
+  );
+
+  // Create date-amount pairs
+  const dateAmountPairs = createDateAmountPairs(billData.amounts, dates);
+
+  console.log('\nGenerated date-amount pairs:');
+  dateAmountPairs.forEach((pair) => {
+    console.log(`Date: ${pair.date}, Amount: ₹${pair.amount}`);
+  });
+  console.log('\nTotal:', billData.total);
   console.log('Expected Total:', config.totalAmount);
+  console.log('Number of slips:', dateAmountPairs.length);
+
+  if (billData.isApproximation) {
+    console.warn(
+      'Note: The system had to approximate values to meet your constraints.'
+    );
+  }
 
   if (!billData.isValid) {
     console.error('Error: Generated amounts do not match the total amount!');
+    return;
+  }
+
+  if (billData.amounts.length < config.minSlipCount) {
+    console.error(
+      'Error: Could not generate the minimum number of slips required!'
+    );
     return;
   }
 
@@ -592,8 +867,30 @@ async function main() {
   }
 
   // Generate all slip data upfront
-  const allSlipsData = generateAllSlipsData(config);
-  console.log(`All Slip Data:`, allSlipsData);
+  const allSlipsData = dateAmountPairs.map((pair) => {
+    const rate = generatePrice(config.approxRate);
+    const quantity = +(pair.amount / rate).toFixed(2);
+
+    return {
+      receiptNumber: generateReceiptNumber(),
+      teleNumber: '1800-XXX-XXXX',
+      fccId: `FCC${getRandomString(6)}`,
+      fipId: `FIP${getRandomString(4)}`,
+      nozzleId: `N${getRandomString(2)}`,
+      rate,
+      amount: pair.amount,
+      quantity,
+      fuelType: config.fuelType,
+      vehicleType: 'Car',
+      vehicleNumber: toUpperCase(config.vehicleNumber || ''),
+      date: pair.date,
+      customerName: toUpperCase(config.customerName) || '',
+      stationName: `${config.oilCompany} ${config.fuelType} Pump`,
+      stationAddress: config.stationAddress || '',
+    };
+  });
+
+  console.log(`Generated slip data for ${allSlipsData.length} slips.`);
 
   // Second confirmation after slip data
   if (
@@ -622,5 +919,153 @@ async function main() {
   }
 }
 
+// Modified main function to handle approximations
+async function main() {
+  //clear the screen
+  console.clear();
+
+  const config = await getUserInputs();
+
+  //todo: comment remaining line and call generateFuelSlips
+  await generateFuelSlips(config);
+
+  // config.approxRate = parseFloat(config.approxRate);
+
+  // console.log('\nGenerating fuel slips with these configurations:');
+  // console.log(config);
+
+  // // Do initial validation on the constraints
+  // const minPossibleTotal = config.minAmount * config.slipCount;
+  // const maxPossibleTotal = config.maxAmount * config.slipCount;
+
+  // if (
+  //   config.totalAmount < minPossibleTotal ||
+  //   config.totalAmount > maxPossibleTotal
+  // ) {
+  //   console.warn(`Warning: Your constraints might be difficult to satisfy.`);
+  //   console.warn(`With ${config.slipCount} slips:`);
+  //   console.warn(
+  //     `- Minimum possible total: ${minPossibleTotal} (${config.slipCount} slips × ${config.minAmount} min/slip)`
+  //   );
+  //   console.warn(
+  //     `- Maximum possible total: ${maxPossibleTotal} (${config.slipCount} slips × ${config.maxAmount} max/slip)`
+  //   );
+  //   console.warn(`- Your requested total: ${config.totalAmount}`);
+
+  //   const willContinue = await confirmContinue(
+  //     'Would you like to continue anyway? (The system will try to approximate)'
+  //   );
+  //   if (!willContinue) {
+  //     console.log('Operation cancelled by user.');
+  //     return;
+  //   }
+  // }
+
+  // // Generate and validate bill amounts first with minSlipCount
+  // const billData = generateBillAmounts(
+  //   config.totalAmount,
+  //   config.slipCount,
+  //   config.minAmount,
+  //   config.maxAmount,
+  //   config.minSlipCount
+  // );
+
+  // // Generate dates sequence
+  // const dates = generateDateSequence(
+  //   config.fromMonth,
+  //   config.toMonth,
+  //   config.fromYear,
+  //   config.toYear,
+  //   config.slipCount
+  // );
+
+  // // Create date-amount pairs
+  // const dateAmountPairs = createDateAmountPairs(billData.amounts, dates);
+
+  // console.log('\nGenerated date-amount pairs:');
+  // dateAmountPairs.forEach((pair) => {
+  //   console.log(`Date: ${pair.date}, Amount: ₹${pair.amount}`);
+  // });
+  // console.log('\nTotal:', billData.total);
+  // console.log('Expected Total:', config.totalAmount);
+  // console.log('Number of slips:', dateAmountPairs.length);
+
+  // if (billData.isApproximation) {
+  //   console.warn(
+  //     'Note: The system had to approximate values to meet your constraints.'
+  //   );
+  // }
+
+  // if (!billData.isValid) {
+  //   console.error('Error: Generated amounts do not match the total amount!');
+  //   return;
+  // }
+
+  // if (billData.amounts.length < config.minSlipCount) {
+  //   console.error(
+  //     'Error: Could not generate the minimum number of slips required!'
+  //   );
+  //   return;
+  // }
+
+  // // First confirmation after amounts
+  // if (!(await confirmContinue('Do you want to continue with these amounts?'))) {
+  //   console.log('Operation cancelled by user after amount generation.');
+  //   return;
+  // }
+
+  // // Generate all slip data upfront
+  // const allSlipsData = dateAmountPairs.map((pair) => {
+  //   const rate = generatePrice(config.approxRate);
+  //   const quantity = +(pair.amount / rate).toFixed(2);
+
+  //   return {
+  //     receiptNumber: generateReceiptNumber(),
+  //     teleNumber: '1800-XXX-XXXX',
+  //     fccId: `FCC${getRandomString(6)}`,
+  //     fipId: `FIP${getRandomString(4)}`,
+  //     nozzleId: `N${getRandomString(2)}`,
+  //     rate,
+  //     amount: pair.amount,
+  //     quantity,
+  //     fuelType: config.fuelType,
+  //     vehicleType: 'Car',
+  //     vehicleNumber: toUpperCase(config.vehicleNumber || ''),
+  //     date: pair.date,
+  //     customerName: toUpperCase(config.customerName) || '',
+  //     stationName: `${config.oilCompany} ${config.fuelType} Pump`,
+  //     stationAddress: config.stationAddress || '',
+  //   };
+  // });
+
+  // console.log(`Generated slip data for ${allSlipsData.length} slips.`);
+
+  // // Second confirmation after slip data
+  // if (
+  //   !(await confirmContinue('Do you want to continue with slip generation?'))
+  // ) {
+  //   console.log('Operation cancelled by user after slip data generation.');
+  //   return;
+  // }
+
+  // const browser = await puppeteer.launch({
+  //   headless: 'new',
+  //   args: ['--no-sandbox'],
+  //   defaultViewport: null,
+  // });
+
+  // try {
+  //   for (let i = 0; i < config.slipCount; i++) {
+  //     console.log(`\nGenerating slip ${i + 1} of ${config.slipCount}`);
+  //     await generateFuelSlip(config, browser, allSlipsData[i]);
+  //     // Increased delay between generations to prevent overlapping
+  //     await delay(5000);
+  //   }
+  // } finally {
+  //   await browser.close();
+  //   console.log('Browser closed');
+  // }
+}
+
 // Start the script
-main().catch(console.error);
+// main().catch(console.error);

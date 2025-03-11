@@ -1,0 +1,19 @@
+{
+  "fromYear": 2024,
+  "fromMonth": "April",
+  "toYear": 2025,
+  "toMonth": "March",
+  "oilCompany": "Indian Oil",
+  "fuelType": "Petrol",
+  "pumpTemplate": "template-1",
+  "approxRate": 94.5,
+  "customerName": "Ashish Kumar",
+  "slipCount": 2,
+  "minSlipCount": 2,
+  "totalAmount": 6000,
+  "stationAddress": "",
+  "vehicleNumber": "DL2CAY2073",
+  "minAmount": 1500,
+  "maxAmount": 3500,
+  "takeDebugScreenshots": false
+}
