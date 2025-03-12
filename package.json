@@ -1,9 +1,10 @@
 {
   "type": "module",
   "dependencies": {
+    "cli-progress": "^3.12.0",
     "inquirer": "^12.4.1",
-    "puppeteer": "^24.2.0",
-    "cli-progress": "^3.12.0"
+    "moment": "^2.30.1",
+    "puppeteer": "^24.2.0"
   },
   "scripts": {
     "start": "node generate-fuel-slips.js",

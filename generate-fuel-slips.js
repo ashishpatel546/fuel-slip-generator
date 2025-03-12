@@ -3,6 +3,7 @@ import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import moment from 'moment'; // Add this import
 
 // Get __dirname equivalent in ES modules
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -148,6 +149,26 @@ export async function getUserInputs() {
         return true;
       },
     },
+    {
+      type: 'number',
+      name: 'maxDays',
+      message: 'How many days to skip to pick next bill date?',
+      default: 10,
+      validate: (value) => {
+        if (value < 1) return 'At least one slip must be generated';
+        return true;
+      },
+    },
+    {
+      type: 'number',
+      name: 'minDays',
+      message: 'Minimum days between bills:',
+      default: 5,
+      validate: (value) => {
+        if (value < 1) return 'Minimum days must be at least 1';
+        return true;
+      },
+    },
   ];
 
   // Get initial answers including slipCount
@@ -286,7 +307,9 @@ export function generateDateSequence(
   toMonth,
   fromYear,
   toYear,
-  count
+  count,
+  maxDays,
+  minDays = 5
 ) {
   const months = [
     'January',
@@ -306,39 +329,180 @@ export function generateDateSequence(
   const fromIndex = months.indexOf(fromMonth);
   const toIndex = months.indexOf(toMonth);
 
-  const startDate = new Date(fromYear, fromIndex, 1);
-  const endDate = new Date(toYear, toIndex + 1, 0); // Last day of end month
+  // Create moment objects for start and end dates
+  let startDate = moment([fromYear, fromIndex, 1]);
+  let endMonthStartDate = moment([toYear, toIndex, 1]);
+  let endDate = endMonthStartDate.endOf('month');
 
-  let dates = [];
-  let currentDate = new Date(startDate);
+  // Calculate total available days
+  const totalDays = endDate.diff(startDate, 'days');
+  const minRequiredDays = minDays * (count - 1);
 
-  // Generate dates with random intervals
-  while (currentDate <= endDate && dates.length < count) {
-    dates.push(new Date(currentDate));
-    // Add random days between 5 and 25
-    const randomDays = Math.floor(Math.random() * (25 - 5 + 1)) + 5;
-    currentDate.setDate(currentDate.getDate() + randomDays);
+  if (totalDays < minRequiredDays) {
+    console.warn(
+      `Warning: Time period (${totalDays} days) is not enough for ${count} slips with minimum ${minDays} days gap. Need at least ${minRequiredDays} days.`
+    );
+    return null;
   }
 
-  // If we still need more dates, distribute remaining evenly
-  if (dates.length < count) {
-    const remainingCount = count - dates.length;
-    const totalDays =
-      (endDate - dates[dates.length - 1]) / (1000 * 60 * 60 * 24);
-    const averageInterval = Math.floor(totalDays / (remainingCount + 1));
+  // Ensure maxDays is greater than minDays
+  if (maxDays <= minDays) {
+    console.warn(
+      `Warning: maxDays (${maxDays}) must be greater than minDays (${minDays}). Setting maxDays to ${
+        minDays + 5
+      }.`
+    );
+    maxDays = minDays + 5;
+  }
 
-    let lastDate = new Date(dates[dates.length - 1]);
-    while (dates.length < count && lastDate < endDate) {
-      lastDate = new Date(lastDate);
-      lastDate.setDate(lastDate.getDate() + averageInterval);
-      if (lastDate <= endDate) {
-        dates.push(lastDate);
+  // Calculate available extra days for randomization
+  const extraDays = totalDays - minRequiredDays;
+  const avgExtraDaysPerInterval = Math.floor(extraDays / (count - 1));
+
+  // Initialize array for dates
+  let dates = [];
+
+  // Start with a random date in first two weeks
+  let firstDateOffset = Math.min(14, Math.floor(totalDays * 0.05));
+  let currentDate = startDate
+    .clone()
+    .add(Math.floor(Math.random() * firstDateOffset), 'days');
+  dates.push(currentDate.clone());
+
+  // Debug information
+  console.log(`Total days available: ${totalDays}`);
+  console.log(`Minimum required days: ${minRequiredDays}`);
+  console.log(`Extra days available for randomization: ${extraDays}`);
+  console.log(`Average extra days per interval: ${avgExtraDaysPerInterval}`);
+
+  // Force more varied interval distribution by creating an array of intervals first
+  let intervals = [];
+  let remainingExtraDays = extraDays;
+
+  // Generate n-1 intervals with varied days
+  for (let i = 0; i < count - 1; i++) {
+    // Calculate how many extra days to use for this interval
+    // Use non-uniform distribution to create more variation
+    let extraForThisInterval;
+
+    // As we get closer to the end, adjust the randomization strategy
+    if (i < count - 2) {
+      // For earlier intervals, use more randomization
+      const maxExtraForThis = Math.min(
+        remainingExtraDays,
+        Math.max(avgExtraDaysPerInterval * 2, maxDays - minDays)
+      );
+
+      // Apply different randomization patterns
+      if (Math.random() < 0.3) {
+        // Sometimes use a low value (30% chance)
+        extraForThisInterval = Math.floor(
+          Math.random() * Math.min(3, maxExtraForThis)
+        );
+      } else if (Math.random() < 0.7) {
+        // Sometimes use a medium value (40% chance)
+        extraForThisInterval = Math.floor(
+          Math.random() * (maxExtraForThis / 2) + 1
+        );
+      } else {
+        // Sometimes use a high value (30% chance)
+        extraForThisInterval = Math.floor(
+          Math.random() * maxExtraForThis + maxExtraForThis / 2
+        );
+      }
+    } else {
+      // For the last interval, use whatever remains (but cap it)
+      extraForThisInterval = Math.min(remainingExtraDays, maxDays - minDays);
+    }
+
+    // Ensure we stay within remaining extra days
+    extraForThisInterval = Math.min(extraForThisInterval, remainingExtraDays);
+    remainingExtraDays -= extraForThisInterval;
+
+    // The interval is minDays plus the extra days
+    intervals.push(minDays + extraForThisInterval);
+  }
+
+  // Shuffle the intervals to prevent any pattern
+  intervals = intervals.sort(() => Math.random() - 0.5);
+
+  // Now use these intervals to generate dates
+  for (let i = 0; i < intervals.length; i++) {
+    currentDate = currentDate.clone().add(intervals[i], 'days');
+
+    // Check if we've gone past the end date
+    if (currentDate.isAfter(endDate)) {
+      break;
+    }
+
+    dates.push(currentDate.clone());
+  }
+
+  // If we couldn't generate enough dates, try again with a more direct approach
+  if (dates.length < count) {
+    console.warn(
+      `Could only generate ${dates.length} dates. Trying alternative approach...`
+    );
+
+    // Distribute the dates more evenly
+    const avgDaysBetweenDates = Math.floor(totalDays / (count - 1));
+
+    dates = [];
+    currentDate = startDate.clone();
+    dates.push(currentDate.clone());
+
+    for (let i = 1; i < count; i++) {
+      // Use a random value between minDays and avgDaysBetweenDates
+      const daysToAdd =
+        minDays +
+        Math.floor(
+          Math.random() * (Math.min(maxDays, avgDaysBetweenDates) - minDays + 1)
+        );
+
+      currentDate = currentDate.clone().add(daysToAdd, 'days');
+
+      if (currentDate.isAfter(endDate)) {
+        break;
+      }
+
+      dates.push(currentDate.clone());
+    }
+  }
+
+  // Final verification of minimum spacing
+  let validSequence = true;
+  for (let i = 1; i < dates.length; i++) {
+    const daysDiff = dates[i].diff(dates[i - 1], 'days');
+    if (daysDiff < minDays) {
+      validSequence = false;
+      console.error(
+        `Invalid sequence detected: ${daysDiff} days between ${dates[
+          i - 1
+        ].format('M/D/YYYY')} and ${dates[i].format('M/D/YYYY')}`
+      );
+    }
+  }
+
+  // Fix any issues
+  if (!validSequence) {
+    console.warn('Fixing sequence to ensure minimum day constraints...');
+    for (let i = 1; i < dates.length; i++) {
+      const minRequired = dates[i - 1].clone().add(minDays, 'days');
+      if (dates[i].isBefore(minRequired)) {
+        dates[i] = minRequired.clone();
       }
     }
   }
 
-  // Sort dates and format them
-  return dates.sort((a, b) => a - b).map((date) => date.toLocaleDateString());
+  // Log the actual intervals for verification
+  console.log('Actual intervals between dates:');
+  for (let i = 1; i < dates.length; i++) {
+    const daysBetween = dates[i].diff(dates[i - 1], 'days');
+    console.log(`Between dates ${i} and ${i - 1}: ${daysBetween} days`);
+  }
+
+  // Format and return the dates
+  return dates.slice(0, count).map((date) => date.format('M/D/YYYY'));
 }
 
 // Modified generateBillAmounts function with recursion limit
@@ -834,8 +998,17 @@ export async function generate(config) {
     config.toMonth,
     config.fromYear,
     config.toYear,
-    config.slipCount
+    config.slipCount,
+    config.maxDays,
+    config.minDays // Pass the user-provided minDays
   );
+
+  if (!dates || dates.length < config.slipCount) {
+    console.error(
+      'Failed to generate enough valid dates. Please adjust your date range or number of slips.'
+    );
+    return;
+  }
 
   // Create date-amount pairs
   const dateAmountPairs = createDateAmountPairs(billData.amounts, dates);
